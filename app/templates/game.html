@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}بازی {{ room_code }} — Count Time Game{% endblock %}
+
+{% block content %}
+<section class="game-wrap" data-room-code="{{ room_code }}" data-username="{{ username }}">
+    <div class="game-header">
+        <div class="room-info">
+            <span class="room-label">کد Room</span>
+            <button type="button" class="room-code" id="room-code-btn" title="کپی کد">{{ room_code }}</button>
+        </div>
+        <div class="game-state">
+            <span class="state-dot" id="state-dot"></span>
+            <span id="state-text">در حال اتصال…</span>
+        </div>
+    </div>
+
+    <div class="game-grid">
+        <aside class="players-panel">
+            <h2 class="panel-title">بازیکنان <span class="count-badge" id="player-count">0</span></h2>
+            <ul class="players-list" id="players-list"></ul>
+        </aside>
+
+        <main class="game-main">
+            <div class="timer-stage" id="timer-stage">
+                <div class="timer-display" id="timer-display">0.000</div>
+                <div class="timer-hint" id="timer-hint">منتظر شروع بازی بمان…</div>
+            </div>
+
+            <div class="controls">
+                <button type="button" class="btn btn--primary btn--xl" id="start-btn" disabled>شروع (Start)</button>
+                <button type="button" class="btn btn--danger btn--xl" id="stop-btn" disabled>توقف (Stop)</button>
+            </div>
+
+            <div class="host-controls" id="host-controls" hidden>
+                <button type="button" class="btn btn--accent" id="begin-btn">شروع کل بازی</button>
+            </div>
+
+            <div class="result-banner" id="result-banner" hidden></div>
+        </main>
+
+        <aside class="results-panel" id="results-panel" hidden>
+            <h2 class="panel-title">نتایج نهایی</h2>
+            <ol class="results-list" id="results-list"></ol>
+        </aside>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/game.js') }}"></script>
+{% endblock %}

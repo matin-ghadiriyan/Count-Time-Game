@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block title %}ثبت‌نام — Count Time Game{% endblock %}
+
+{% block content %}
+<section class="auth-wrap">
+    <div class="auth-card">
+        <div class="auth-head">
+            <h1 class="auth-title">ساخت حساب</h1>
+            <p class="auth-subtitle">چند ثانیه وقت می‌برد تا وارد بازی شوی.</p>
+        </div>
+
+        <form method="post" class="auth-form" autocomplete="on">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="field">
+                <label for="username">نام کاربری</label>
+                <input id="username" name="username" type="text" required minlength="3" maxlength="32"
+                       pattern="[A-Za-z0-9]+" title="فقط حروف و اعداد"
+                       placeholder="مثلاً matin" autocomplete="username">
+                <span class="field-hint">۳ تا ۳۲ کاراکتر، فقط حروف و اعداد.</span>
+            </div>
+
+            <div class="field">
+                <label for="password">رمز عبور</label>
+                <input id="password" name="password" type="password" required minlength="6"
+                       placeholder="••••••" autocomplete="new-password">
+            </div>
+
+            <div class="field">
+                <label for="confirm_password">تکرار رمز عبور</label>
+                <input id="confirm_password" name="confirm_password" type="password" required minlength="6"
+                       placeholder="••••••" autocomplete="new-password">
+            </div>
+
+            <button type="submit" class="btn btn--primary btn--block">ثبت‌نام</button>
+        </form>
+
+        <p class="auth-foot">
+            حساب داری؟
+            <a href="{{ url_for('pages.login') }}">وارد شو</a>
+        </p>
+    </div>
+</section>
+{% endblock %}

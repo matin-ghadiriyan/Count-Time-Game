@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{% block title %}تاریخچه بازی‌ها — Count Time Game{% endblock %}
+
+{% block content %}
+<section class="page-section">
+    <div class="page-head">
+        <h1 class="page-title">📜 تاریخچه بازی‌های من</h1>
+        <p class="page-subtitle">نتایج آخرین بازی‌های تو در Count Time Game.</p>
+    </div>
+
+    {% if items %}
+    <div class="history-list">
+        {% for item in items %}
+        <div class="history-card {% if item.result == 'WINNER' %}history-card--win{% elif item.result == 'LOSER' %}history-card--lose{% endif %}">
+            <div class="history-head">
+                <span class="history-id">Game #{{ item.game_id }}</span>
+                <span class="history-room">Room: {{ item.room_id }}</span>
+            </div>
+
+            <div class="history-body">
+                <div class="history-result">
+                    {% if item.result == 'WINNER' %}
+                        <span class="result-badge result-badge--win">🏆 برنده</span>
+                    {% elif item.result == 'LOSER' %}
+                        <span class="result-badge result-badge--lose">باخت</span>
+                    {% elif item.result == 'DISCONNECTED' %}
+                        <span class="result-badge result-badge--muted">قطع اتصال</span>
+                    {% else %}
+                        <span class="result-badge result-badge--muted">بدون نتیجه</span>
+                    {% endif %}
+                </div>
+
+                <div class="history-time">
+                    {% if item.elapsed_time is not none %}
+                        <span class="time-value">{{ '%.3f' | format(item.elapsed_time) }}s</span>
+                    {% else %}
+                        <span class="time-value time-value--muted">—</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% if item.winner %}
+            <div class="history-foot">
+                <span>برنده: <strong>{{ item.winner }}</strong></span>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <span class="empty-icon">📭</span>
+        <p>هنوز در هیچ بازی‌ای شرکت نکرده‌ای.</p>
+        <a href="{{ url_for('pages.dashboard') }}" class="btn btn--primary">اولین بازی</a>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}
