@@ -120,10 +120,20 @@ def handle_disconnect():
     )
     _broadcast_room_state(room)
 
-    # اگر بازی در حال اجرا بود و همه‌ی بازیکنان متصل Stop کرده بودند،
-    # بازی را نهایی می‌کنیم.
-    if room.state == RoomState.RUNNING and room.all_stopped():
-        _finalize_game(room)
+    # اگر بازیکنِ قطع‌شده نوبت‌دار بود، نوبت را جلو می‌بریم تا بازی قفل نشود.
+    if room.state == RoomState.RUNNING and room.current_player_id() == player.user_id:
+        next_id, all_done = room_manager.advance_turn(room.code)
+        socketio.emit(
+            "turn_changed",
+            {
+                "current_player_id": next_id,
+                "all_done": all_done,
+                "room_code": room.code,
+            },
+            to=room.code,
+        )
+        if all_done:
+            _finalize_game(room)
 
     # اگر Room دیگر بازیکن متصل ندارد، پاک شود.
     if all(not p.connected for p in room.players.values()):
@@ -240,6 +250,8 @@ def handle_start_game(data):
             return _error("حداقل یک بازیکن متصل لازم است.")
 
         room.state = RoomState.RUNNING
+        # ساخت ترتیب نوبت‌ها بر اساس بازیکنان متصل
+        room.build_turn_order()
         started_at = datetime.utcnow()
 
         # ثبت یک رکورد Game در دیتابیس
@@ -303,20 +315,88 @@ def handle_stop_game(data):
     if error:
         return _error(error)
 
-    # ارسال نتیجه‌ی همین بازیکن به خودش
+    # زمان سپری‌شده به خودِ بازیکن نشان داده نمی‌شود؛ فقط حریفان آن را
+    # می‌بینند تا بازیکن مجبور شود زمان را حدس بزند.
     emit(
         "player_stopped",
         {
             "ok": True,
             "user_id": user.id,
             "username": user.username,
+            "elapsed_time": None,
+        },
+    )
+    # اطلاع‌رسانی به حریفان همراه با نمایش زمان واقعی
+    socketio.emit(
+        "opponent_elapsed",
+        {
+            "user_id": user.id,
+            "username": user.username,
             "elapsed_time": elapsed,
         },
+        to=room.code,
+        skip_sid=request.sid,
+    )
+    _broadcast_room_state(room)
+    return
+
+
+@socketio.on("submit_guess")
+def handle_submit_guess(data):
+    """ثبت حدس زمان بازیکن پس از توقف.
+
+    بازیکن بعد از زدن دکمه‌ی Stop، در یک اینپوت تعداد ثانیه‌های سپری‌شده
+    را حدس می‌زند. اختلاف حدس با زمان واقعی در سرور محاسبه و ذخیره
+    می‌شود؛ برنده کسی است که کمترین اختلاف را داشته باشد.
+    """
+    user = _current_user_or_none()
+    if user is None:
+        return _error("ابتدا وارد حساب کاربری شوید.")
+
+    if not isinstance(data, dict):
+        return _error("داده‌ی ورودی نامعتبر است.")
+
+    room_code = str(data.get("room_code", "")).strip().upper()
+    room = room_manager.get_room(room_code)
+    if room is None:
+        return _error("Room یافت نشد.")
+    if user.id not in room.players:
+        return _error("شما عضو این Room نیستید.")
+
+    raw_guess = data.get("guessed_time")
+    try:
+        guessed_time = float(raw_guess)
+    except (TypeError, ValueError):
+        return _error("مقدار حدس نامعتبر است.")
+
+    guess_diff, error = room_manager.submit_guess(
+        room.code, user.id, guessed_time
+    )
+    if error:
+        return _error(error)
+
+    # ارسال نتیجه‌ی حدس همین بازیکن به خودش
+    emit(
+        "player_guessed",
+        {
+            "ok": True,
+            "user_id": user.id,
+            "username": user.username,
+            "guess_diff": guess_diff,
+        },
+    )
+
+    # انتقال نوبت به بازیکن بعدی
+    next_id, all_done = room_manager.advance_turn(room.code)
+    socketio.emit(
+        "turn_changed",
+        {"current_player_id": next_id, "all_done": all_done, "room_code": room.code},
+        to=room.code,
     )
     _broadcast_room_state(room)
 
-    # اگر همه‌ی بازیکنان متصل Stop کرده‌اند، بازی نهایی شود.
-    if room.all_stopped():
+    # اگر همه‌ی نوبت‌ها تمام شد، بازی نهایی شود.
+    if all_done:
         _finalize_game(room)
 
 
@@ -354,6 +434,9 @@ def _finalize_game(room) -> None:
 
             if player.has_stopped and player.elapsed_time is not None:
                 record.elapsed_time = player.elapsed_time
+            if player.has_guessed:
+                record.guessed_time = player.guessed_time
+                record.guess_diff = player.guess_diff
 
             user_obj = db.session.get(User, player.user_id)
 

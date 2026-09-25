@@ -23,7 +23,7 @@
 
         <main class="game-main">
             <div class="timer-stage" id="timer-stage">
-                <div class="timer-display" id="timer-display">0.000</div>
+                <div class="timer-display" id="timer-display">—</div>
                 <div class="timer-hint" id="timer-hint">منتظر شروع بازی بمان…</div>
             </div>
 
@@ -34,6 +34,15 @@
 
             <div class="host-controls" id="host-controls" hidden>
                 <button type="button" class="btn btn--accent" id="begin-btn">شروع کل بازی</button>
+            </div>
+
+            <div class="guess-box" id="guess-box" hidden>
+                <label class="guess-label" for="guess-input">چند ثانیه گذشت؟ حدس بزن:</label>
+                <div class="guess-row">
+                    <input type="number" class="guess-input" id="guess-input" min="0" step="0.001" placeholder="مثلاً 4.250" inputmode="decimal">
+                    <button type="button" class="btn btn--accent" id="guess-btn">ثبت حدس</button>
+                </div>
+                <div class="guess-feedback" id="guess-feedback" hidden></div>
             </div>
 
             <div class="result-banner" id="result-banner" hidden></div>

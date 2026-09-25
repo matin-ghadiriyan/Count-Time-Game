@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+
+{% block title %}نتایج نهایی — Count Time Game{% endblock %}
+
+{% block content %}
+<section class="results-page" data-room-code="{{ room_code }}">
+
+    <!-- سرصفحه‌ی نتایج -->
+    <header class="results-head">
+        <span class="results-eyebrow">پایان بازی</span>
+        <h1 class="results-title">نتایج نهایی</h1>
+        <p class="results-subtitle">
+            اتاق <span class="mono">{{ room_code }}</span>
+            {% if finished_at %}· {{ finished_at }}{% endif %}
+        </p>
+    </header>
+
+    <!-- کارت برنده -->
+    {% if winner %}
+    <div class="winner-card">
+        <div class="winner-crown" aria-hidden="true">🏆</div>
+        <div class="winner-text">
+            <span class="winner-label">برنده‌ی این راند</span>
+            <span class="winner-name">{{ winner }}</span>
+            <span class="winner-note">دقیق‌ترین حدس زمان</span>
+        </div>
+    </div>
+    {% else %}
+    <div class="winner-card winner-card--muted">
+        <div class="winner-crown" aria-hidden="true">🤝</div>
+        <div class="winner-text">
+            <span class="winner-label">برنده‌ای تعیین نشد</span>
+            <span class="winner-note">تعداد بازیکنان معتبر برای رقابت کافی نبود.</span>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- خلاصه‌ی زمان‌ها -->
+    {% if reference_time is not none %}
+    <div class="time-summary">
+        <div class="time-tile time-tile--ref">
+            <span class="time-tile__label">زمان درست (مرجع)</span>
+            <span class="time-tile__value mono">{{ '%.3f'|format(reference_time) }}s</span>
+        </div>
+        <div class="time-tile">
+            <span class="time-tile__label">تعداد بازیکنان</span>
+            <span class="time-tile__value">{{ rows|length }}</span>
+        </div>
+        <div class="time-tile">
+            <span class="time-tile__label">کمترین اختلاف</span>
+            <span class="time-tile__value mono">{% if best_diff is not none %}{{ '%.3f'|format(best_diff) }}s{% else %}—{% endif %}</span>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- جدول رتبه‌بندی -->
+    <div class="table-wrap results-table-wrap">
+        <table class="data-table results-table">
+            <thead>
+                <tr>
+                    <th>رتبه</th>
+                    <th>بازیکن</th>
+                    <th>زمان درست</th>
+                    <th>زمان حدس‌زده</th>
+                    <th>اختلاف</th>
+                    <th>وضعیت</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr class="{% if row.rank <= 3 %}rank-top rank-top--{{ row.rank }}{% endif %}{% if row.is_me %} results-row--me{% endif %}">
+                    <td class="rank-cell">
+                        {% if row.rank == 1 %}🥇
+                        {% elif row.rank == 2 %}🥈
+                        {% elif row.rank == 3 %}🥉
+                        {% else %}{{ row.rank }}{% endif %}
+                    </td>
+                    <td class="username-cell">{{ row.username }}{% if row.is_me %} <span class="me-tag">(شما)</span>{% endif %}</td>
+                    <td class="mono">{% if row.time is not none %}{{ '%.3f'|format(row.time) }}s{% else %}—{% endif %}</td>
+                    <td class="mono">{% if row.guess is not none %}{{ '%.3f'|format(row.guess) }}s{% else %}—{% endif %}</td>
+                    <td class="diff-cell mono">{% if row.diff is not none %}{{ '%.3f'|format(row.diff) }}s{% else %}—{% endif %}</td>
+                    <td>
+                        {% if row.result == 'WINNER' %}<span class="result-badge result-badge--win">برنده</span>
+                        {% elif row.result == 'DISCONNECTED' %}<span class="result-badge result-badge--muted">قطع‌شده</span>
+                        {% elif row.result == 'NO_RESULT' %}<span class="result-badge result-badge--muted">بدون نتیجه</span>
+                        {% else %}<span class="result-badge result-badge--lose">باخت</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- اقدامات -->
+    <div class="results-actions">
+        <a href="{{ url_for('pages.game_room', room_code=room_code) }}" class="btn btn--primary">بازی دوباره در همین اتاق</a>
+        <a href="{{ url_for('pages.dashboard') }}" class="btn btn--ghost">بازگشت به داشبورد</a>
+        <a href="{{ url_for('pages.leaderboard') }}" class="btn btn--ghost">جدول امتیازات</a>
+    </div>
+</section>
+{% endblock %}

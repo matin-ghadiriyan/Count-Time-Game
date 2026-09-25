@@ -141,6 +141,9 @@ class GamePlayer(db.Model):
 
     # زمان محاسبه‌شده در سرور؛ می‌تواند تا لحظه‌ی Stop خالی باشد.
     elapsed_time = db.Column(db.Float, nullable=True)
+    # حدس بازیکن از زمان سپری‌شده و اختلاف آن با زمان واقعی.
+    guessed_time = db.Column(db.Float, nullable=True)
+    guess_diff = db.Column(db.Float, nullable=True)
     result = db.Column(db.String(16), nullable=False, default=PlayerResult.NO_RESULT.value)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 

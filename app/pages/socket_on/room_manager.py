@@ -45,6 +45,8 @@ class PlayerState:
     start_time: float | None = None
     stop_time: float | None = None
     elapsed_time: float | None = None
+    guessed_time: float | None = None
+    guess_diff: float | None = None
     result: str = "NO_RESULT"
     connected: bool = True
 
@@ -55,6 +57,10 @@ class PlayerState:
     @property
     def has_stopped(self) -> bool:
         return self.stop_time is not None
+
+    @property
+    def has_guessed(self) -> bool:
+        return self.guessed_time is not None
 
 
 @dataclass
@@ -68,6 +74,34 @@ class Room:
     players: dict[int, PlayerState] = field(default_factory=dict)
     game_db_id: int | None = None
     created_at: float = field(default_factory=time.perf_counter)
+    turn_order: list[int] = field(default_factory=list)
+    current_turn_index: int = 0
+
+    def current_player_id(self) -> int | None:
+        """شناسه‌ی بازیکنی که نوبت اوست."""
+        if not self.turn_order:
+            return None
+        if self.current_turn_index >= len(self.turn_order):
+            return None
+        return self.turn_order[self.current_turn_index]
+
+    def advance_turn(self) -> int | None:
+        """رفتن به نوبت بعدی. اگر نوبتی نماند None برمی‌گرداند."""
+        self.current_turn_index += 1
+        return self.current_player_id()
+
+    def all_turns_done(self) -> bool:
+        """آیا همه‌ی نوبت‌ها به پایان رسیده است؟"""
+        if not self.turn_order:
+            return False
+        return self.current_turn_index >= len(self.turn_order)
+
+    def build_turn_order(self) -> None:
+        """ساخت ترتیب نوبت بر اساس ترتیب فعلی بازیکنان متصل."""
+        self.turn_order = [
+            p.user_id for p in self.players.values() if p.connected
+        ]
+        self.current_turn_index = 0
 
     def is_full(self) -> bool:
         return len(self.players) >= self.capacity
@@ -79,6 +113,15 @@ class Room:
             return False
         return all(p.has_stopped for p in active)
 
+    def all_guessed(self) -> bool:
+        """آیا همه‌ی بازیکنانی که Stop کرده‌اند، حدس زمانشان را ثبت کرده‌اند؟"""
+        stopped = [
+            p for p in self.players.values() if p.connected and p.has_stopped
+        ]
+        if not stopped:
+            return False
+        return all(p.has_guessed for p in stopped)
+
     def public_players(self) -> list[dict]:
         """اطلاعات قابل‌ارسال به Client (بدون افشای زمان‌های داخلی)."""
         return [
@@ -87,7 +130,9 @@ class Room:
                 "username": p.username,
                 "has_started": p.has_started,
                 "has_stopped": p.has_stopped,
+                "has_guessed": p.has_guessed,
                 "connected": p.connected,
+                "is_current_turn": p.user_id == self.current_player_id(),
             }
             for p in self.players.values()
         ]
@@ -169,7 +214,10 @@ class RoomManager:
 
     # ---------------- Start / Stop ----------------
     def start_player(self, code: str, user_id: int) -> tuple[float | None, str | None]:
-        """ثبت زمان شروع بازیکن. خروجی: (start_time, error_message)."""
+        """ثبت زمان شروع بازیکن. فقط بازیکن نوبت‌دار می‌تواند Start کند.
+
+        خروجی: (start_time, error_message).
+        """
         with self._lock:
             room = self._rooms.get(code)
             if room is None:
@@ -182,6 +230,8 @@ class RoomManager:
                 return None, "شما عضو این Room نیستید."
             if player.has_started:
                 return None, "قبلاً بازی را شروع کرده‌اید."
+            if room.current_player_id() != user_id:
+                return None, "الان نوبت شما نیست."
 
             player.start_time = time.perf_counter()
             return player.start_time, None
@@ -208,31 +258,97 @@ class RoomManager:
             player.elapsed_time = round(player.stop_time - player.start_time, 3)
             return player.elapsed_time, None
 
+    def visible_elapsed(self, room: Room, viewer_id: int) -> dict[int, float]:
+        """زمان سپری‌شده‌ی هر بازیکن برای نمایش به بیننده.
+
+        قاعده‌ی مهم: بازیکنِ نوبت‌دار نباید زمان خودش را ببیند؛ فقط
+        حریفان می‌توانند زمان او را ببینند. پس زمان بازیکن جاری از
+        خروجی همان بیننده حذف می‌شود.
+        """
+        current = room.current_player_id()
+        result: dict[int, float] = {}
+        for p in room.players.values():
+            if p.elapsed_time is None:
+                continue
+            # بازیکن نوبت‌دار زمان خودش را نمی‌بیند.
+            if p.user_id == viewer_id and p.user_id == current:
+                continue
+            result[p.user_id] = p.elapsed_time
+        return result
+
+    # ---------------- ثبت حدس زمان ----------------
+    def submit_guess(
+        self, code: str, user_id: int, guessed_time: float
+    ) -> tuple[float | None, str | None]:
+        """ثبت حدس زمان بازیکن و محاسبه‌ی اختلاف با زمان واقعی.
+
+        پس از ثبت حدس، نوبت به بازیکن بعدی منتقل می‌شود.
+        خروجی: (guess_diff, error_message)
+        """
+        with self._lock:
+            room = self._rooms.get(code)
+            if room is None:
+                return None, "Room یافت نشد."
+
+            player = room.players.get(user_id)
+            if player is None:
+                return None, "شما عضو این Room نیستید."
+            if not player.has_stopped:
+                return None, "ابتدا باید دکمه‌ی توقف را بزنید."
+            if player.has_guessed:
+                return None, "قبلاً حدس خود را ثبت کرده‌اید."
+            if guessed_time < 0:
+                return None, "زمان حدس نمی‌تواند منفی باشد."
+
+            player.guessed_time = round(float(guessed_time), 3)
+            player.guess_diff = round(
+                abs(player.guessed_time - (player.elapsed_time or 0.0)), 3
+            )
+            return player.guess_diff, None
+
+    def advance_turn(self, code: str) -> tuple[int | None, bool]:
+        """انتقال نوبت به بازیکن بعدی.
+
+        خروجی: (current_player_id, all_done)
+        """
+        with self._lock:
+            room = self._rooms.get(code)
+            if room is None:
+                return None, True
+            room.advance_turn()
+            return room.current_player_id(), room.all_turns_done()
+
     # ---------------- پایان بازی ----------------
     def determine_winner(self, room: Room) -> tuple[int | None, list[dict]]:
-        """تعیین برنده بر اساس کمترین زمان معتبر.
+        """تعیین برنده بر اساس نزدیک‌ترین حدس به زمان واقعی.
 
         قوانین:
-            - فقط بازیکنانی که هم Start و هم Stop کرده‌اند معتبرند.
-            - کمترین elapsed_time برنده است.
+            - فقط بازیکنانی که Start، Stop و ثبت حدس کرده‌اند معتبرند.
+            - کمترین اختلاف (guess_diff) برنده است.
             - اگر تعداد معتبرها کمتر از ۲ باشد، برنده‌ای تعیین نمی‌شود.
         خروجی: (winner_user_id, results_list)
         """
         valid_players = [
             p
             for p in room.players.values()
-            if p.has_started and p.has_stopped and p.elapsed_time is not None
+            if p.has_started
+            and p.has_stopped
+            and p.elapsed_time is not None
+            and p.guess_diff is not None
         ]
-        valid_players.sort(key=lambda p: p.elapsed_time or float("inf"))
+        valid_players.sort(key=lambda p: p.guess_diff if p.guess_diff is not None else float("inf"))
 
         results = [
             {
                 "user_id": p.user_id,
                 "username": p.username,
                 "time": p.elapsed_time,
-                "result": "WINNER" if p is valid_players[0] else "LOSER",
+                "guess": p.guessed_time,
+                "diff": p.guess_diff,
+                "rank": index + 1,
+                "result": "WINNER" if index == 0 else "LOSER",
             }
-            for p in valid_players
+            for index, p in enumerate(valid_players)
         ]
 
         if len(valid_players) < 2:

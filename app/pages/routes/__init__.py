@@ -151,6 +151,81 @@ def game_room(room_code: str):
     )
 
 
+@bp.route("/results/<int:game_id>")
+@login_required
+def results(game_id: int):
+    """صفحه‌ی نتایج نهایی یک بازی تمام‌شده.
+
+    این صفحه پس از پایان بازی نمایش داده می‌شود و شامل موارد زیر است:
+        - زمان درست (مرجع)
+        - زمان هر بازیکن و حدس او
+        - اختلاف هر حدس با زمان واقعی
+        - جدول رتبه‌بندی بر اساس نفر اول، دوم، سوم و ...
+    """
+    game = db.session.get(Game, game_id)
+    if game is None:
+        flash("بازی موردنظر یافت نشد.", "danger")
+        return redirect(url_for("pages.dashboard"))
+
+    records = (
+        GamePlayer.query.filter_by(game_id=game.id)
+        .join(User)
+        .order_by(GamePlayer.guess_diff.asc().nullslast())
+        .all()
+    )
+
+    # --- ساخت ردیف‌ها با استفاده از مقادیر واقعی ذخیره‌شده در دیتابیس ---
+    rows = []
+    for record in records:
+        player = record.user
+        rows.append(
+            {
+                "user_id": player.id,
+                "username": player.username,
+                "time": record.elapsed_time,
+                "guess": record.guessed_time,
+                "diff": record.guess_diff,
+                "result": record.result,
+                "is_me": player.id == current_user.id,
+            }
+        )
+
+    # زمان درست مرجع: میانگین زمان‌های واقعی ثبت‌شده در این راند.
+    real_times = [r["time"] for r in rows if r["time"] is not None]
+    reference_time = (
+        round(sum(real_times) / len(real_times), 3) if real_times else None
+    )
+
+    # رتبه‌بندی: برنده اول، سپس بر اساس کمترین اختلاف واقعی.
+    def _rank_key(row):
+        if row["result"] == PlayerResult.WINNER.value:
+            return (0, row["diff"] if row["diff"] is not None else float("inf"))
+        if row["diff"] is None:
+            return (2, float("inf"))
+        return (1, row["diff"])
+
+    rows.sort(key=_rank_key)
+    for index, row in enumerate(rows):
+        row["rank"] = index + 1
+
+    best_diff = None
+    diffs = [r["diff"] for r in rows if r["diff"] is not None]
+    if diffs:
+        best_diff = min(diffs)
+
+    return render_template(
+        "results.html",
+        room_code=game.room_id,
+        winner=game.winner.username if game.winner else None,
+        finished_at=(
+            game.finished_at.strftime("%Y-%m-%d %H:%M") if game.finished_at else None
+        ),
+        rows=rows,
+        reference_time=reference_time,
+        best_diff=best_diff,
+    )
+
+
 # ----------------------------------------------------------------
 # Leaderboard و History
 # ----------------------------------------------------------------

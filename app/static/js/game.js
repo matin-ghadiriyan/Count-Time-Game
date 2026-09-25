@@ -39,6 +39,10 @@
     resultsPanel: document.getElementById("results-panel"),
     resultsList: document.getElementById("results-list"),
     roomCodeBtn: document.getElementById("room-code-btn"),
+    guessBox: document.getElementById("guess-box"),
+    guessInput: document.getElementById("guess-input"),
+    guessBtn: document.getElementById("guess-btn"),
+    guessFeedback: document.getElementById("guess-feedback"),
   };
 
   // --- وضعیت محلی کلاینت ---
@@ -48,6 +52,8 @@
     gameState: "WAITING",
     hasStarted: false,
     hasStopped: false,
+    hasGuessed: false,
+    isMyTurn: false,
     rafId: null,
     localStart: 0,
   };
@@ -86,6 +92,8 @@
       if (p.user_id === local.myUserId) li.classList.add("player-item--me");
       if (!p.connected) li.classList.add("player-item--offline");
       if (p.has_stopped) li.classList.add("player-item--done");
+      if (p.has_guessed) li.classList.add("player-item--guessed");
+      if (p.is_current_turn) li.classList.add("player-item--turn");
 
       const name = document.createElement("span");
       name.className = "player-name";
@@ -95,10 +103,12 @@
       status.className = "player-status";
       if (!p.connected) {
         status.textContent = "قطع";
+      } else if (p.has_guessed) {
+        status.textContent = "✓ حدس ثبت شد";
       } else if (p.has_stopped) {
-        status.textContent = "✓ ثبت شد";
-      } else if (p.has_started) {
-        status.textContent = "⏱ در حال اجرا";
+        status.textContent = "✎ در انتظار حدس";
+      } else if (p.is_current_turn) {
+        status.textContent = "🎯 نوبت او";
       } else {
         status.textContent = "منتظر";
       }
@@ -113,6 +123,10 @@
   // Timer محلی (فقط برای نمایش؛ نتیجه‌ی واقعی از سرور می‌آید)
   // ================================================================
   function startLocalTimer() {
+    // زمان به بازیکن نوبت‌دار نشان داده نمی‌شود؛ پس Timer محلی فقط
+    // برای بازیکنانِ غیرنوبتی (حریفان) به‌عنوان شمارنده‌ی نمایشی اجرا می‌شود.
+    if (local.isMyTurn) return;
+
     local.localStart = performance.now();
 
     function tick() {
@@ -136,12 +150,30 @@
   // ================================================================
   function refreshControls() {
     const running = local.gameState === "RUNNING";
+    const turn = local.isMyTurn;
 
-    els.startBtn.disabled = !running || local.hasStarted || local.hasStopped;
-    els.stopBtn.disabled = !running || !local.hasStarted || local.hasStopped;
+    els.startBtn.disabled = !running || !turn || local.hasStarted || local.hasStopped;
+    els.stopBtn.disabled = !running || !turn || !local.hasStarted || local.hasStopped;
 
-    els.startBtn.classList.toggle("is-active", running && !local.hasStarted && !local.hasStopped);
-    els.stopBtn.classList.toggle("is-active", running && local.hasStarted && !local.hasStopped);
+    els.startBtn.classList.toggle("is-active", running && turn && !local.hasStarted && !local.hasStopped);
+    els.stopBtn.classList.toggle("is-active", running && turn && local.hasStarted && !local.hasStopped);
+  }
+
+  // ================================================================
+  // جعبه‌ی حدس زمان
+  // ================================================================
+  function showGuessBox() {
+    if (local.hasGuessed) return;
+    els.guessBox.hidden = false;
+    els.guessInput.disabled = false;
+    els.guessBtn.disabled = false;
+    els.guessFeedback.hidden = true;
+    els.guessInput.value = "";
+    els.guessInput.focus();
+  }
+
+  function hideGuessBox() {
+    els.guessBox.hidden = true;
   }
 
   // ================================================================
@@ -187,6 +219,34 @@
     if (me) {
       local.hasStarted = me.has_started;
       local.hasStopped = me.has_stopped;
+      local.hasGuessed = me.has_guessed;
+      local.isMyTurn = !!me.is_current_turn;
+      if (me.has_stopped && !me.has_guessed) {
+        showGuessBox();
+      }
+      if (me.has_guessed) {
+        hideGuessBox();
+      }
+    }
+
+    // نمایش نوبت جاری
+    const turnPlayer = data.players.find((p) => p.is_current_turn);
+    if (local.gameState === "RUNNING" && turnPlayer) {
+      if (local.isMyTurn) {
+        setHint("نوبت توست! دکمه‌ی Start را بزن.");
+      } else {
+        setHint("نوبت " + turnPlayer.username + " است. زمان او را ببین…");
+      }
+    }
+
+    // اگر بازی تمام شده و همه نوبت‌ها انجام شده، منتظر نتیجه بمان
+    if (local.gameState === "RUNNING" && !turnPlayer && data.players.length > 0) {
+      const allGuessed = data.players.every(
+        (p) => !p.connected || p.has_guessed
+      );
+      if (allGuessed) {
+        setHint("همه نوبت‌ها تمام شد. در حال محاسبه‌ی نتیجه…");
+      }
     }
 
     els.hostControls.hidden = !(local.isHost && data.state === "WAITING");
@@ -200,25 +260,79 @@
     els.resultsPanel.hidden = true;
     local.hasStarted = false;
     local.hasStopped = false;
-    els.timerDisplay.textContent = "0.000";
+    local.hasGuessed = false;
+    hideGuessBox();
+    els.timerDisplay.textContent = "—";
+    setHint("بازی شروع شد. منتظر نوبتت بمان…");
     refreshControls();
   });
 
   socket.on("player_started", (data) => {
     if (data.user_id === local.myUserId) {
       local.hasStarted = true;
-      setHint("زمان در حال ثبت است… حالا Stop کن!");
+      // بازیکن نوبت‌دار زمان خودش را نمی‌بیند؛ فقط دکمه‌ی Stop فعال است.
+      els.timerDisplay.textContent = "؟.؟؟؟";
+      setHint("زمان مخفی است! هر وقت خواستی Stop بزن.");
+    } else {
+      // زمان حریف برای ما قابل‌مشاهده است.
+      setHint(data.username + " شروع کرد… زمان او را ببین.");
       startLocalTimer();
-      refreshControls();
     }
+    refreshControls();
+  });
+
+  socket.on("opponent_elapsed", (data) => {
+    // زمان حریف برای ما قابل‌مشاهده است، اما او خودش نمی‌بیند.
+    if (data.user_id !== local.myUserId) {
+      stopLocalTimer();
+      els.timerDisplay.textContent = formatTime(data.elapsed_time);
+      setHint("⏱ زمان " + data.username + ": " + formatTime(data.elapsed_time) + " ثانیه");
+    }
+  });
+
+  socket.on("turn_changed", (data) => {
+    local.isMyTurn = data.current_player_id === local.myUserId;
+    local.hasStarted = false;
+    local.hasStopped = false;
+    local.hasGuessed = false;
+    stopLocalTimer();
+    hideGuessBox();
+    els.timerDisplay.textContent = "—";
+    if (data.all_done) {
+      setHint("همه نوبت‌ها تمام شد. در حال محاسبه‌ی نتیجه…");
+    } else if (local.isMyTurn) {
+      setHint("نوبت توست! Start را بزن.");
+    } else {
+      setHint("منتظر بمان تا نوبتت شود…");
+    }
+    refreshControls();
   });
 
   socket.on("player_stopped", (data) => {
     if (data.user_id === local.myUserId) {
       local.hasStopped = true;
       stopLocalTimer();
-      els.timerDisplay.textContent = formatTime(data.elapsed_time);
-      setHint(`زمان ثبت‌شده‌ی تو: ${formatTime(data.elapsed_time)} ثانیه`);
+      // زمان به کاربر نشان داده نمی‌شود؛ باید حدس بزند.
+      els.timerDisplay.textContent = "؟.؟؟؟";
+      setHint("حالا حدس بزن چند ثانیه گذشت!");
+      showGuessBox();
+      refreshControls();
+    } else {
+      // حریف Stop کرد؛ زمان او برای ما نمایش داده شد (از طریق opponent_elapsed).
+      setHint(data.username + " Stop کرد.");
+    }
+  });
+
+  socket.on("player_guessed", (data) => {
+    if (data.user_id === local.myUserId) {
+      local.hasGuessed = true;
+      hideGuessBox();
+      els.guessFeedback.hidden = false;
+      els.guessFeedback.textContent =
+        "حدس ثبت شد. اختلاف تو با زمان واقعی: " +
+        formatTime(data.guess_diff) +
+        " ثانیه";
+      setHint("منتظر بمان تا نوبت بعدی شروع شود…");
       refreshControls();
     }
   });
@@ -248,25 +362,39 @@
 
       const rank = document.createElement("span");
       rank.className = "result-rank";
-      rank.textContent = index + 1;
+      rank.textContent = r.rank !== undefined ? r.rank : index + 1;
 
       const name = document.createElement("span");
       name.className = "result-name";
       name.textContent = r.username;
 
-      const time = document.createElement("span");
-      time.className = "result-time";
-      time.textContent = formatTime(r.time) + "s";
+      const detail = document.createElement("span");
+      detail.className = "result-time";
+      const realTime = formatTime(r.time);
+      const guessTime = r.guess !== null && r.guess !== undefined ? formatTime(r.guess) : "—";
+      const diffTime = r.diff !== null && r.diff !== undefined ? formatTime(r.diff) : "—";
+      detail.textContent = `واقعی ${realTime}s · حدس ${guessTime}s · اختلاف ${diffTime}s`;
 
       li.appendChild(rank);
       li.appendChild(name);
-      li.appendChild(time);
+      li.appendChild(detail);
       els.resultsList.appendChild(li);
     });
 
-    setHint("بازی تمام شد. برای بازی جدید یک Room تازه بساز.");
+    setHint("بازی تمام شد. رتبه‌بندی نهایی بر اساس نزدیک‌ترین حدس نمایش داده شد.");
     els.startBtn.disabled = true;
     els.stopBtn.disabled = true;
+    hideGuessBox();
+
+    // --- انتقال به صفحه‌ی نتایج نهایی ---
+    // پس از یک مکث کوتاه، کاربر به صفحه‌ی اختصاصی نتایج می‌رود که شامل
+    // زمان درست، زمان بازیکنان، اختلاف و جدول رتبه‌بندی ۱، ۲، ۳، ۴ است.
+    const gameId = data.game_id;
+    if (gameId) {
+      setTimeout(() => {
+        window.location.href = "/results/" + gameId;
+      }, 1800);
+    }
   });
 
   socket.on("player_disconnected", (data) => {
@@ -304,6 +432,28 @@
   els.stopBtn.addEventListener("click", () => {
     if (els.stopBtn.disabled) return;
     socket.emit("stop_game", { room_code: roomCode });
+  });
+
+  function submitGuess() {
+    if (els.guessBtn.disabled) return;
+    const raw = els.guessInput.value.trim();
+    const value = Number(raw);
+    if (raw === "" || Number.isNaN(value) || value < 0) {
+      els.guessFeedback.hidden = false;
+      els.guessFeedback.textContent = "یک عدد معتبر و نامنفی وارد کن.";
+      return;
+    }
+    els.guessBtn.disabled = true;
+    els.guessInput.disabled = true;
+    socket.emit("submit_guess", { room_code: roomCode, guessed_time: value });
+  }
+
+  els.guessBtn.addEventListener("click", submitGuess);
+  els.guessInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitGuess();
+    }
   });
 
   els.roomCodeBtn.addEventListener("click", async () => {
