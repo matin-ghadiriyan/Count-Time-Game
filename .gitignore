@@ -1,0 +1,52 @@
+# ===================== Python =====================
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ===================== Virtual Environment =====================
+
+.venv/
+venv/
+env/
+ENV/
+
+# ===================== Environment Variables =====================
+
+.env
+.env.*
+!.env.example
+
+# ===================== Flask =====================
+
+instance/
+.webassets-cache/
+
+# ===================== Database =====================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# ===================== Testing =====================
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ===================== Build =====================
+
+build/
+dist/
+*.egg-info/
+
+# ===================== IDE =====================
+
+.vscode/
+.idea/
+
+# ===================== OS =====================
+
+.DS_Store
+Thumbs.db
+desktop.ini
