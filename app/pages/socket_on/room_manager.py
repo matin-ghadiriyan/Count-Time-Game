@@ -1,20 +1,21 @@
 """
-app/pages/socket_on/room_manager.py — مدیریت وضعیت Roomها در حافظه‌ی سرور
+app/pages/socket_on/room_manager.py — In-memory room state management.
 
-مسئولیت این فایل:
-    - نگه‌داری وضعیت جاری هر Room (بازیکنان، وضعیت بازی، زمان‌ها)
-    - عملیات اتمی روی Room: ساخت، عضویت، خروج، Start/Stop، پایان بازی
-    - محاسبه‌ی زمان با time.perf_counter (monotonic)
+Responsibilities of this file:
+    - Keep the current state of each Room (players, game state, timings)
+    - Atomic Room operations: create, join, leave, Start/Stop, finish game
+    - Compute elapsed time with time.perf_counter (monotonic)
 
-چرا این فایل لازم است؟
-    وضعیت لحظه‌ای بازی (چه کسی Start کرده، چه زمانی) نباید در دیتابیس
-    ذخیره شود چون به‌ازای هر کلیک تغییر می‌کند و باعث فشار روی DB می‌شود.
-    دیتابیس فقط نتیجه‌ی نهایی را نگه می‌دارد. این الگوی رایج در بازی‌های
-    Real-Time است: State در حافظه، Result در DB.
+Why is this file needed?
+    The live game state (who started, when) must not be stored in the
+    database because it changes on every click and would put pressure on
+    the DB. The database only keeps the final result. This is the common
+    pattern in real-time games: state in memory, result in the DB.
 
-نکته‌ی مهم:
-    این ساختار Thread-Safe است چون در async_mode="threading" ممکن است
-    چند Event همزمان اجرا شوند. قفل سراسری از Race Condition جلوگیری می‌کند.
+Important note:
+    This structure is thread-safe because with async_mode="threading"
+    multiple events may run at the same time. The global lock prevents
+    race conditions.
 """
 
 import threading
@@ -24,7 +25,7 @@ from datetime import datetime
 
 
 class RoomState:
-    """وضعیت‌های ممکن یک Room. مقادیر رشته‌ای برای ارسال ساده به Client."""
+    """Possible states of a Room. String values for easy client transport."""
 
     WAITING = "WAITING"
     RUNNING = "RUNNING"
@@ -33,10 +34,10 @@ class RoomState:
 
 @dataclass
 class PlayerState:
-    """وضعیت یک بازیکن در یک راند بازی.
+    """State of a player in a game round.
 
-    start_time و stop_time با time.perf_counter() ثبت می‌شوند که یک ساعت
-    monotonic است و تحت تأثیر تغییر ساعت سیستم قرار نمی‌گیرد.
+    start_time and stop_time are recorded with time.perf_counter(), a
+    monotonic clock that is not affected by system clock changes.
     """
 
     user_id: int
@@ -65,7 +66,7 @@ class PlayerState:
 
 @dataclass
 class Room:
-    """یک اتاق بازی. room_code هم‌زمان به‌عنوان شناسه‌ی SocketIO Room استفاده می‌شود."""
+    """A game room. room_code is also used as the SocketIO room identifier."""
 
     code: str
     host_id: int
@@ -78,7 +79,7 @@ class Room:
     current_turn_index: int = 0
 
     def current_player_id(self) -> int | None:
-        """شناسه‌ی بازیکنی که نوبت اوست."""
+        """ID of the player whose turn it is."""
         if not self.turn_order:
             return None
         if self.current_turn_index >= len(self.turn_order):
@@ -86,18 +87,18 @@ class Room:
         return self.turn_order[self.current_turn_index]
 
     def advance_turn(self) -> int | None:
-        """رفتن به نوبت بعدی. اگر نوبتی نماند None برمی‌گرداند."""
+        """Move to the next turn. Returns None if no turns remain."""
         self.current_turn_index += 1
         return self.current_player_id()
 
     def all_turns_done(self) -> bool:
-        """آیا همه‌ی نوبت‌ها به پایان رسیده است؟"""
+        """Have all turns finished?"""
         if not self.turn_order:
             return False
         return self.current_turn_index >= len(self.turn_order)
 
     def build_turn_order(self) -> None:
-        """ساخت ترتیب نوبت بر اساس ترتیب فعلی بازیکنان متصل."""
+        """Build the turn order based on the current connected players."""
         self.turn_order = [
             p.user_id for p in self.players.values() if p.connected
         ]
@@ -107,14 +108,14 @@ class Room:
         return len(self.players) >= self.capacity
 
     def all_stopped(self) -> bool:
-        """آیا همه‌ی بازیکنانِ متصل، Stop کرده‌اند؟"""
+        """Have all connected players stopped?"""
         active = [p for p in self.players.values() if p.connected]
         if not active:
             return False
         return all(p.has_stopped for p in active)
 
     def all_guessed(self) -> bool:
-        """آیا همه‌ی بازیکنانی که Stop کرده‌اند، حدس زمانشان را ثبت کرده‌اند؟"""
+        """Have all players who stopped submitted their time guess?"""
         stopped = [
             p for p in self.players.values() if p.connected and p.has_stopped
         ]
@@ -123,7 +124,7 @@ class Room:
         return all(p.has_guessed for p in stopped)
 
     def public_players(self) -> list[dict]:
-        """اطلاعات قابل‌ارسال به Client (بدون افشای زمان‌های داخلی)."""
+        """Client-safe player info (without exposing internal timings)."""
         return [
             {
                 "user_id": p.user_id,
@@ -139,13 +140,13 @@ class Room:
 
 
 class RoomManager:
-    """مدیریت متمرکز همه‌ی Roomها. یک نمونه‌ی Singleton در سطح ماژول ساخته می‌شود."""
+    """Central manager for all rooms. A module-level singleton is created."""
 
     def __init__(self) -> None:
         self._rooms: dict[str, Room] = {}
         self._lock = threading.RLock()
 
-    # ---------------- مدیریت Room ----------------
+    # ---------------- Room management ----------------
     def create_room(self, code: str, host_id: int, capacity: int = 8) -> Room:
         with self._lock:
             room = self._rooms.get(code)
@@ -163,7 +164,7 @@ class RoomManager:
             self._rooms.pop(code, None)
 
     def find_room_by_sid(self, sid: str) -> Room | None:
-        """پیدا کردن Room بر اساس SID اتصال (برای مدیریت Disconnect)."""
+        """Find a Room by connection SID (for disconnect handling)."""
         with self._lock:
             for room in self._rooms.values():
                 for player in room.players.values():
@@ -171,20 +172,20 @@ class RoomManager:
                         return room
         return None
 
-    # ---------------- عضویت ----------------
+    # ---------------- Membership ----------------
     def join(
         self, code: str, user_id: int, username: str, sid: str, capacity: int = 8
     ) -> tuple[Room | None, str | None]:
-        """ورود کاربر به Room. خروجی: (room, error_message)."""
+        """Join a user to a Room. Returns: (room, error_message)."""
         with self._lock:
             room = self._rooms.get(code)
             if room is None:
-                # اگر Room وجود ندارد، به‌عنوان میزبان ساخته می‌شود.
+                # If the Room does not exist, it is created with the user as host.
                 room = self.create_room(code, host_id=user_id, capacity=capacity)
 
             existing = room.players.get(user_id)
             if existing is not None:
-                # کاربر قبلاً عضو است؛ فقط SID را به‌روز می‌کنیم (رفرش صفحه).
+                # The user is already a member; just refresh the SID (page refresh).
                 existing.sid = sid
                 existing.connected = True
                 return room, None
@@ -201,7 +202,7 @@ class RoomManager:
             return room, None
 
     def leave(self, code: str, user_id: int) -> Room | None:
-        """خروج کاربر از Room. اگر Room خالی شد حذف می‌شود."""
+        """Remove a user from a Room. The Room is deleted if it becomes empty."""
         with self._lock:
             room = self._rooms.get(code)
             if room is None:
@@ -214,9 +215,9 @@ class RoomManager:
 
     # ---------------- Start / Stop ----------------
     def start_player(self, code: str, user_id: int) -> tuple[float | None, str | None]:
-        """ثبت زمان شروع بازیکن. فقط بازیکن نوبت‌دار می‌تواند Start کند.
+        """Record a player's start time. Only the player whose turn it is can start.
 
-        خروجی: (start_time, error_message).
+        Returns: (start_time, error_message).
         """
         with self._lock:
             room = self._rooms.get(code)
@@ -237,7 +238,7 @@ class RoomManager:
             return player.start_time, None
 
     def stop_player(self, code: str, user_id: int) -> tuple[float | None, str | None]:
-        """ثبت زمان توقف و محاسبه‌ی زمان سپری‌شده. خروجی: (elapsed, error_message)."""
+        """Record the stop time and compute the elapsed time. Returns: (elapsed, error_message)."""
         with self._lock:
             room = self._rooms.get(code)
             if room is None:
@@ -254,36 +255,36 @@ class RoomManager:
                 return None, "قبلاً بازی را متوقف کرده‌اید."
 
             player.stop_time = time.perf_counter()
-            # محاسبه‌ی زمان در سرور؛ Client هیچ دخالتی در این مقدار ندارد.
+            # Time is computed on the server; the client has no part in this value.
             player.elapsed_time = round(player.stop_time - player.start_time, 3)
             return player.elapsed_time, None
 
     def visible_elapsed(self, room: Room, viewer_id: int) -> dict[int, float]:
-        """زمان سپری‌شده‌ی هر بازیکن برای نمایش به بیننده.
+        """Elapsed time of each player for display to a viewer.
 
-        قاعده‌ی مهم: بازیکنِ نوبت‌دار نباید زمان خودش را ببیند؛ فقط
-        حریفان می‌توانند زمان او را ببینند. پس زمان بازیکن جاری از
-        خروجی همان بیننده حذف می‌شود.
+        Important rule: the player whose turn it is must not see their own
+        time; only opponents may see it. So the current player's time is
+        removed from that viewer's output.
         """
         current = room.current_player_id()
         result: dict[int, float] = {}
         for p in room.players.values():
             if p.elapsed_time is None:
                 continue
-            # بازیکن نوبت‌دار زمان خودش را نمی‌بیند.
+            # The player whose turn it is does not see their own time.
             if p.user_id == viewer_id and p.user_id == current:
                 continue
             result[p.user_id] = p.elapsed_time
         return result
 
-    # ---------------- ثبت حدس زمان ----------------
+    # ---------------- Time guess submission ----------------
     def submit_guess(
         self, code: str, user_id: int, guessed_time: float
     ) -> tuple[float | None, str | None]:
-        """ثبت حدس زمان بازیکن و محاسبه‌ی اختلاف با زمان واقعی.
+        """Record a player's time guess and compute the difference from the real time.
 
-        پس از ثبت حدس، نوبت به بازیکن بعدی منتقل می‌شود.
-        خروجی: (guess_diff, error_message)
+        After the guess is recorded, the turn moves to the next player.
+        Returns: (guess_diff, error_message)
         """
         with self._lock:
             room = self._rooms.get(code)
@@ -307,9 +308,9 @@ class RoomManager:
             return player.guess_diff, None
 
     def advance_turn(self, code: str) -> tuple[int | None, bool]:
-        """انتقال نوبت به بازیکن بعدی.
+        """Advance the turn to the next player.
 
-        خروجی: (current_player_id, all_done)
+        Returns: (current_player_id, all_done)
         """
         with self._lock:
             room = self._rooms.get(code)
@@ -318,15 +319,15 @@ class RoomManager:
             room.advance_turn()
             return room.current_player_id(), room.all_turns_done()
 
-    # ---------------- پایان بازی ----------------
+    # ---------------- Game end ----------------
     def determine_winner(self, room: Room) -> tuple[int | None, list[dict]]:
-        """تعیین برنده بر اساس نزدیک‌ترین حدس به زمان واقعی.
+        """Determine the winner by the closest guess to the real time.
 
-        قوانین:
-            - فقط بازیکنانی که Start، Stop و ثبت حدس کرده‌اند معتبرند.
-            - کمترین اختلاف (guess_diff) برنده است.
-            - اگر تعداد معتبرها کمتر از ۲ باشد، برنده‌ای تعیین نمی‌شود.
-        خروجی: (winner_user_id, results_list)
+        Rules:
+            - Only players who started, stopped, and guessed are valid.
+            - The smallest difference (guess_diff) wins.
+            - If there are fewer than 2 valid players, no winner is set.
+        Returns: (winner_user_id, results_list)
         """
         valid_players = [
             p
@@ -355,14 +356,14 @@ class RoomManager:
             return None, results
 
         winner = valid_players[0]
-        # ثبت نتیجه‌ی نهایی روی خودِ PlayerStateها
+        # Store the final result on the PlayerState objects themselves
         for p in valid_players:
             p.result = "WINNER" if p is winner else "LOSER"
 
         return winner.user_id, results
 
     def mark_disconnected(self, code: str, user_id: int) -> Room | None:
-        """علامت‌گذاری بازیکن به‌عنوان قطع‌شده (بدون حذف از Room)."""
+        """Mark a player as disconnected (without removing them from the Room)."""
         with self._lock:
             room = self._rooms.get(code)
             if room is None:
@@ -374,5 +375,5 @@ class RoomManager:
             return room
 
 
-# نمونه‌ی Singleton؛ در همه‌ی Socket Handlerها import می‌شود.
+# Singleton instance; imported by all Socket handlers.
 room_manager = RoomManager()

@@ -1,22 +1,22 @@
 """
-app/pages/socket_on/__init__.py — ثبت Socket Eventها
+app/pages/socket_on/__init__.py — Socket event registration.
 
-مسئولیت این فایل:
-    - تعریف و ثبت تمام SocketIO Eventها
-    - اعتبارسنجی اولیه‌ی ورودی و بررسی دسترسی
-    - واگذاری منطق اصلی به room_manager و لایه‌ی دیتابیس
-    - ارسال Event به اعضای همان Room
+Responsibilities of this file:
+    - Define and register all SocketIO events
+    - Basic input validation and access checks
+    - Delegate the core logic to room_manager and the database layer
+    - Emit events only to members of the same Room
 
-چرا این‌جا؟ طبق معماری درخواستی، Eventهای Real-Time بازی داخل
-app/pages/socket_on قرار می‌گیرند و از Routeهای HTTP جدا هستند.
+Why here? Per the requested architecture, real-time game events live in
+app/pages/socket_on and are separate from the HTTP routes.
 
-الگوی طراحی:
-    Socket Handler = لایه‌ی نازک (thin layer)
-    RoomManager   = منبع حقیقت وضعیت بازی (game state)
-    Database      = ذخیره‌ی نتیجه‌ی نهایی
+Design pattern:
+    Socket handler = thin layer
+    RoomManager    = source of truth for game state
+    Database       = stores the final result
 
-این جداسازی باعث می‌شود منطق بازی قابل تست باشد و Handlerها فقط
-مسئول ارتباط Real-Time باشند.
+This separation keeps the game logic testable and leaves the handlers
+responsible only for real-time communication.
 """
 
 from datetime import datetime
@@ -37,13 +37,13 @@ from .room_manager import RoomManager, RoomState, room_manager
 
 
 # ------------------------------------------------------------------
-# ابزارهای کمکی
+# Helpers
 # ------------------------------------------------------------------
 def _current_user_or_none() -> User | None:
-    """دریافت کاربر احراز هویت‌شده در Context سوکت.
+    """Get the authenticated user inside the socket context.
 
-    Flask-Login در SocketIO با current_user کار می‌کند به شرطی که Session
-    کوکی ارسال شده باشد. برای اطمینان، user_id را از session نیز می‌خوانیم.
+    Flask-Login works with current_user in SocketIO as long as the session
+    cookie is sent. To be safe, the user_id is also read from the session.
     """
     if current_user and current_user.is_authenticated:
         return current_user
@@ -54,12 +54,12 @@ def _current_user_or_none() -> User | None:
 
 
 def _error(message: str, event: str = "error") -> None:
-    """ارسال خطای استاندارد فقط به همان Client."""
+    """Send a standard error only to that client."""
     emit(event, {"ok": False, "message": message})
 
 
 def _room_payload(room) -> dict:
-    """ساخت بدنه‌ی مشترک برای رویدادهای مربوط به Room."""
+    """Build the shared payload for Room-related events."""
     return {
         "room_code": room.code,
         "state": room.state,
@@ -71,33 +71,33 @@ def _room_payload(room) -> dict:
 
 
 def _broadcast_room_state(room) -> None:
-    """ارسال وضعیت به‌روز Room به همه‌ی اعضا."""
+    """Send the updated Room state to all members."""
     socketio.emit("room_state", _room_payload(room), to=room.code)
 
 
 # ------------------------------------------------------------------
-# اتصال و قطع اتصال
+# Connect and disconnect
 # ------------------------------------------------------------------
 @socketio.on("connect")
 def handle_connect():
-    """اتصال اولیه‌ی سوکت.
+    """Initial socket connection.
 
-    کاربر باید احراز هویت شده باشد؛ در غیر این صورت اتصال رد می‌شود تا
-    از ارسال Event توسط مهمان‌ها جلوگیری شود.
+    The user must be authenticated; otherwise the connection is rejected
+    to prevent guests from emitting events.
     """
     user = _current_user_or_none()
     if user is None:
-        return False  # اتصال رد می‌شود
+        return False  # connection rejected
     emit("connected", {"ok": True, "username": user.username})
 
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    """مدیریت قطع اتصال بازیکن.
+    """Handle a player disconnecting.
 
-    اگر بازیکن وسط بازی قطع شود، وضعیتش به‌عنوان disconnected علامت می‌خورد
-    و سایر اعضای Room مطلع می‌شوند. حذف کامل بازیکن انجام نمی‌شود تا اگر
-    دوباره وصل شد، بتواند نتیجه‌ی قبلی‌اش را حفظ کند.
+    If a player drops mid-game, their state is marked as disconnected and
+    the other Room members are notified. The player is not fully removed so
+    that a reconnect can preserve their previous result.
     """
     sid = request.sid
     room = room_manager.find_room_by_sid(sid)
@@ -112,7 +112,7 @@ def handle_disconnect():
 
     room_manager.mark_disconnected(room.code, player.user_id)
 
-    # اطلاع‌رسانی به سایر اعضای Room
+    # Notify the other Room members
     socketio.emit(
         "player_disconnected",
         {"user_id": player.user_id, "username": player.username},
@@ -120,7 +120,7 @@ def handle_disconnect():
     )
     _broadcast_room_state(room)
 
-    # اگر بازیکنِ قطع‌شده نوبت‌دار بود، نوبت را جلو می‌بریم تا بازی قفل نشود.
+    # If the disconnected player held the turn, advance it so the game doesn't lock up.
     if room.state == RoomState.RUNNING and room.current_player_id() == player.user_id:
         next_id, all_done = room_manager.advance_turn(room.code)
         socketio.emit(
@@ -135,23 +135,23 @@ def handle_disconnect():
         if all_done:
             _finalize_game(room)
 
-    # اگر Room دیگر بازیکن متصل ندارد، پاک شود.
+    # If the Room no longer has connected players, remove it.
     if all(not p.connected for p in room.players.values()):
         room_manager.remove_room(room.code)
 
 
 # ------------------------------------------------------------------
-# عضویت در Room
+# Joining a Room
 # ------------------------------------------------------------------
 @socketio.on("join_room")
 def handle_join_room(data):
-    """ورود کاربر به Room و اتصال SID به اتاق SocketIO.
+    """Join a user to a Room and bind the SID to the SocketIO room.
 
-    اعتبارسنجی:
-        - کاربر احراز هویت شده باشد
-        - کد Room معتبر باشد
-        - ظرفیت Room پر نباشد
-        - بازی در حال اجرا نباشد
+    Validation:
+        - The user must be authenticated
+        - The Room code must be valid
+        - The Room must not be full
+        - The game must not be running
     """
     user = _current_user_or_none()
     if user is None:
@@ -183,7 +183,7 @@ def handle_join_room(data):
 
 @socketio.on("leave_room")
 def handle_leave_room(data):
-    """خروج کاربر از Room."""
+    """Remove a user from a Room."""
     user = _current_user_or_none()
     if user is None:
         return _error("ابتدا وارد حساب کاربری شوید.")
@@ -208,21 +208,21 @@ def handle_leave_room(data):
 
 
 # ------------------------------------------------------------------
-# شروع و توقف بازی
+# Starting and stopping the game
 # ------------------------------------------------------------------
 @socketio.on("start_game")
 def handle_start_game(data):
-    """شروع بازی توسط میزبان.
+    """Start the game, initiated by the host.
 
-    این Event دو کاربرد دارد:
-        1. اگر Room در حالت WAITING باشد، میزبان می‌تواند بازی را استارت بزند
-           تا همه‌ی بازیکنان وارد فاز RUNNING شوند.
-        2. زمان شروع هر بازیکن از لحظه‌ای که خودش دکمه‌ی Start را می‌زند
-           توسط سرور ثبت می‌شود.
+    This event serves two purposes:
+        1. If the Room is in WAITING, the host can start the game so every
+           player enters the RUNNING phase.
+        2. Each player's start time is recorded by the server the moment
+           that player presses their own Start button.
 
-    تفکیک این دو حالت با فیلد action انجام می‌شود:
-        action = "begin"  → شروع کل بازی توسط میزبان
-        action = "self"   → ثبت زمان شروع فردی (پیش‌فرض)
+    The two modes are distinguished by the action field:
+        action = "begin"  -> start the whole game (host)
+        action = "self"   -> record an individual start time (default)
     """
     user = _current_user_or_none()
     if user is None:
@@ -240,7 +240,7 @@ def handle_start_game(data):
     if user.id not in room.players:
         return _error("شما عضو این Room نیستید.")
 
-    # --- حالت ۱: شروع کل بازی توسط میزبان ---
+    # --- Mode 1: start the whole game (host) ---
     if action == "begin":
         if room.host_id != user.id:
             return _error("فقط میزبان می‌تواند بازی را شروع کند.")
@@ -250,18 +250,18 @@ def handle_start_game(data):
             return _error("حداقل یک بازیکن متصل لازم است.")
 
         room.state = RoomState.RUNNING
-        # ساخت ترتیب نوبت‌ها بر اساس بازیکنان متصل
+        # Build the turn order from the connected players
         room.build_turn_order()
         started_at = datetime.utcnow()
 
-        # ثبت یک رکورد Game در دیتابیس
+        # Create a Game record in the database
         game = Game(
             room_id=room.code,
             status=GameStatus.RUNNING.value,
             started_at=started_at,
         )
         db.session.add(game)
-        db.session.flush()  # برای گرفتن id قبل از commit
+        db.session.flush()  # get the id before commit
 
         room.game_db_id = game.id
         for player in room.players.values():
@@ -278,7 +278,7 @@ def handle_start_game(data):
         _broadcast_room_state(room)
         return
 
-    # --- حالت ۲: ثبت زمان شروع فردی ---
+    # --- Mode 2: record an individual start time ---
     if room.state != RoomState.RUNNING:
         return _error("بازی هنوز شروع نشده است.")
 
@@ -292,10 +292,10 @@ def handle_start_game(data):
 
 @socketio.on("stop_game")
 def handle_stop_game(data):
-    """توقف زمان توسط بازیکن.
+    """Stop the timer for a player.
 
-    زمان سپری‌شده فقط در سرور و با time.perf_counter محاسبه می‌شود؛
-    Client هیچ مقداری برای زمان ارسال نمی‌کند.
+    The elapsed time is computed only on the server with time.perf_counter;
+    the client never sends any time value.
     """
     user = _current_user_or_none()
     if user is None:
@@ -315,8 +315,8 @@ def handle_stop_game(data):
     if error:
         return _error(error)
 
-    # زمان سپری‌شده به خودِ بازیکن نشان داده نمی‌شود؛ فقط حریفان آن را
-    # می‌بینند تا بازیکن مجبور شود زمان را حدس بزند.
+    # The elapsed time is not shown to the player themselves; only the
+    # opponents see it, forcing the player to guess the time.
     emit(
         "player_stopped",
         {
@@ -326,7 +326,7 @@ def handle_stop_game(data):
             "elapsed_time": None,
         },
     )
-    # اطلاع‌رسانی به حریفان همراه با نمایش زمان واقعی
+    # Notify the opponents along with the real elapsed time
     socketio.emit(
         "opponent_elapsed",
         {
@@ -343,11 +343,12 @@ def handle_stop_game(data):
 
 @socketio.on("submit_guess")
 def handle_submit_guess(data):
-    """ثبت حدس زمان بازیکن پس از توقف.
+    """Record a player's time guess after stopping.
 
-    بازیکن بعد از زدن دکمه‌ی Stop، در یک اینپوت تعداد ثانیه‌های سپری‌شده
-    را حدس می‌زند. اختلاف حدس با زمان واقعی در سرور محاسبه و ذخیره
-    می‌شود؛ برنده کسی است که کمترین اختلاف را داشته باشد.
+    After pressing Stop, the player guesses the elapsed seconds in an
+    input. The difference between the guess and the real time is computed
+    and stored on the server; the winner is the one with the smallest
+    difference.
     """
     user = _current_user_or_none()
     if user is None:
@@ -375,7 +376,7 @@ def handle_submit_guess(data):
     if error:
         return _error(error)
 
-    # ارسال نتیجه‌ی حدس همین بازیکن به خودش
+    # Send this player's guess result back to them
     emit(
         "player_guessed",
         {
@@ -386,7 +387,7 @@ def handle_submit_guess(data):
         },
     )
 
-    # انتقال نوبت به بازیکن بعدی
+    # Advance the turn to the next player
     next_id, all_done = room_manager.advance_turn(room.code)
     socketio.emit(
         "turn_changed",
@@ -395,19 +396,19 @@ def handle_submit_guess(data):
     )
     _broadcast_room_state(room)
 
-    # اگر همه‌ی نوبت‌ها تمام شد، بازی نهایی شود.
+    # If all turns are done, finalize the game.
     if all_done:
         _finalize_game(room)
 
 
 # ------------------------------------------------------------------
-# نهایی‌سازی بازی
+# Game finalization
 # ------------------------------------------------------------------
 def _finalize_game(room) -> None:
-    """پایان بازی: تعیین برنده، ذخیره در DB، به‌روزرسانی آمار و ارسال نتیجه.
+    """End the game: determine the winner, save to DB, update stats, emit result.
 
-    این تابع فقط از داخل Handlerها صدا زده می‌شود و به‌صورت داخلی روی
-    Room قفل منطقی دارد (RoomManager عملیات را اتمی نگه می‌دارد).
+    This function is only called from inside the handlers and relies on the
+    logical lock on the Room (RoomManager keeps operations atomic).
     """
     if room.state == RoomState.FINISHED:
         return
@@ -424,7 +425,7 @@ def _finalize_game(room) -> None:
         game.status = GameStatus.FINISHED.value
         game.finished_at = finished_at
 
-        # --- به‌روزرسانی رکورد بازیکنان و آمار Userها ---
+        # --- Update player records and User stats ---
         for player in room.players.values():
             record = GamePlayer.query.filter_by(
                 game_id=game.id, user_id=player.user_id
@@ -454,7 +455,7 @@ def _finalize_game(room) -> None:
             else:
                 record.result = PlayerResult.NO_RESULT.value
 
-            # فقط بازیکنانی که در راند شرکت کرده‌اند آمار games_played می‌گیرند.
+            # Only players who took part in the round get a games_played stat.
             if user_obj and player.has_stopped:
                 user_obj.games_played += 1
 
@@ -466,7 +467,7 @@ def _finalize_game(room) -> None:
 
         db.session.commit()
 
-    # --- ارسال نتیجه به اعضای Room ---
+    # --- Send the result to the Room members ---
     payload = {
         "room_code": room.code,
         "game_id": room.game_db_id,
@@ -480,9 +481,9 @@ def _finalize_game(room) -> None:
 
 
 # ------------------------------------------------------------------
-# پینگ سبک برای بررسی سلامت اتصال
+# Lightweight ping to check connection health
 # ------------------------------------------------------------------
 @socketio.on("ping_game")
 def handle_ping(data):
-    """پاسخ سریع به Client برای اطمینان از زنده‌بودن اتصال."""
+    """Quick reply to the client to confirm the connection is alive."""
     emit("pong_game", {"ok": True})

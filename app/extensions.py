@@ -1,13 +1,13 @@
 """
-app/extensions.py — نمونه‌های سراسری Extensionها
+app/extensions.py — Global extension instances.
 
-مسئولیت این فایل فقط ساختن (instantiate) کردن Extensionها است، نه
-مقداردهی اولیه. مقداردهی اولیه در app/__init__.py و با init_app انجام
-می‌شود. این جداسازی باعث می‌شود مدل‌ها و ماژول‌ها بتوانند بدون
-ایجاد Circular Import به db دسترسی داشته باشند.
+This file is only responsible for instantiating the extensions, not for
+initializing them. Initialization happens in app/__init__.py via
+init_app. This separation lets models and modules access db without
+creating circular imports.
 
-چرا این‌جا؟ چون در پروژه‌های Flask، extensions.py الگوی استاندارد برای
-جلوگیری از import چرخه‌ای بین app، models و routes است.
+Why here? In Flask projects, extensions.py is the standard pattern to
+avoid circular imports between app, models, and routes.
 """
 
 from flask_sqlalchemy import SQLAlchemy
@@ -15,17 +15,17 @@ from flask_login import LoginManager
 from flask_socketio import SocketIO
 from flask_wtf.csrf import CSRFProtect
 
-# --- دیتابیس ORM ---
+# --- Database ORM ---
 db = SQLAlchemy()
 
-# --- احراز هویت ---
+# --- Authentication ---
 login_manager = LoginManager()
 login_manager.login_view = "pages.login"
 login_manager.login_message = "برای ادامه باید وارد حساب کاربری خود شوید."
 login_manager.login_message_category = "warning"
 
-# --- Real-Time (Flask-SocketIO) ---
-# async_mode به‌صورت پیش‌فرض threading است تا بدون eventlet هم اجرا شود.
+# --- Real-time (Flask-SocketIO) ---
+# async_mode defaults to threading so it can run without eventlet.
 socketio = SocketIO(
     cors_allowed_origins="*",
     async_mode="threading",
@@ -35,5 +35,5 @@ socketio = SocketIO(
     engineio_logger=False,
 )
 
-# --- محافظت CSRF برای فرم‌ها ---
+# --- CSRF protection for forms ---
 csrf = CSRFProtect()

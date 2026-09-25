@@ -1,17 +1,17 @@
 """
-app/models.py — مدل‌های دیتابیس Count Time Game
+app/models.py — Database models for Count Time Game.
 
-این فایل تنها مسئول تعریف ساختار داده‌ها (Tables) و روابط آن‌ها است.
-هیچ منطق بازی یا کوئری پیچیده‌ای اینجا نوشته نمی‌شود؛ آن کار در لایه‌ی
-routes و socket_on انجام می‌شود.
+This file is responsible only for defining the data structures (tables)
+and their relationships. No game logic or complex queries are written
+here; that work happens in the routes and socket_on layers.
 
-چرا این‌جا؟ طبق معماری درخواستی، همه‌ی مدل‌ها در یک فایل models.py
-نگه‌داری می‌شوند تا برای پروژه‌ای با این اندازه، خوانایی و ناوبری ساده بماند.
+Why here? Per the requested architecture, all models are kept in a single
+models.py so that navigation stays simple for a project of this size.
 
-مدل‌ها:
-    - User       : حساب کاربری و آمار کلی بازیکن
-    - Game       : یک راند بازی در یک Room
-    - GamePlayer : نتیجه‌ی هر بازیکن در یک بازی (جدول واسط)
+Models:
+    - User       : user account and overall player stats
+    - Game       : one game round in a Room
+    - GamePlayer : each player's result in a game (association table)
 """
 
 from datetime import datetime
@@ -24,7 +24,7 @@ from .extensions import db
 
 
 class GameStatus(str, Enum):
-    """وضعیت‌های ممکن یک بازی. چون str است، مستقیماً در دیتابیس ذخیره می‌شود."""
+    """Possible states of a game. Because it is a str, it is stored directly in the DB."""
 
     WAITING = "WAITING"
     RUNNING = "RUNNING"
@@ -32,7 +32,7 @@ class GameStatus(str, Enum):
 
 
 class PlayerResult(str, Enum):
-    """نتیجه‌ی هر بازیکن در پایان بازی."""
+    """Each player's result at the end of the game."""
 
     WINNER = "WINNER"
     LOSER = "LOSER"
@@ -41,10 +41,11 @@ class PlayerResult(str, Enum):
 
 
 class User(UserMixin, db.Model):
-    """حساب کاربری بازیکن.
+    """Player account.
 
-    UserMixin متدهای موردنیاز Flask-Login (is_authenticated, get_id و ...)
-    را فراهم می‌کند تا نیازی به پیاده‌سازی دستی نباشد.
+    UserMixin provides the methods required by Flask-Login
+    (is_authenticated, get_id, ...) so they don't need to be implemented
+    manually.
     """
 
     __tablename__ = "users"
@@ -53,15 +54,15 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(32), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
 
-    # --- آمار کلی ---
+    # --- Overall stats ---
     games_played = db.Column(db.Integer, nullable=False, default=0)
     wins = db.Column(db.Integer, nullable=False, default=0)
     losses = db.Column(db.Integer, nullable=False, default=0)
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-    # --- روابط ---
-    # یک کاربر می‌تواند در چندین بازی و چندین رکورد GamePlayer حاضر باشد.
+    # --- Relationships ---
+    # A user can appear in many games and many GamePlayer records.
     game_players = db.relationship(
         "GamePlayer",
         back_populates="user",
@@ -75,13 +76,13 @@ class User(UserMixin, db.Model):
         lazy="selectin",
     )
 
-    # --- مدیریت رمز عبور ---
+    # --- Password management ---
     def set_password(self, raw_password: str) -> None:
-        """رمز عبور هرگز به‌صورت plaintext ذخیره نمی‌شود؛ فقط hash."""
+        """The password is never stored as plaintext; only as a hash."""
         self.password_hash = generate_password_hash(raw_password)
 
     def check_password(self, raw_password: str) -> bool:
-        """مقایسه‌ی امن رمز ورودی با hash ذخیره‌شده."""
+        """Safely compare the entered password with the stored hash."""
         return check_password_hash(self.password_hash, raw_password)
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -89,10 +90,10 @@ class User(UserMixin, db.Model):
 
 
 class Game(db.Model):
-    """یک راند بازی در یک Room مشخص.
+    """One game round in a specific Room.
 
-    room_id همان کد Room است (مثلاً ABC123) و بین راندهای مختلف یک Room
-    تکرار می‌شود؛ به همین دلیل unique نیست ولی index دارد.
+    room_id is the Room code (e.g. ABC123) and repeats across different
+    rounds of the same Room; that is why it is not unique but is indexed.
     """
 
     __tablename__ = "games"
@@ -109,7 +110,7 @@ class Game(db.Model):
 
     winner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
-    # --- روابط ---
+    # --- Relationships ---
     winner = db.relationship(
         "User", back_populates="won_games", foreign_keys=[winner_id]
     )
@@ -125,9 +126,10 @@ class Game(db.Model):
 
 
 class GamePlayer(db.Model):
-    """نتیجه‌ی یک بازیکن در یک بازی خاص.
+    """A player's result in a specific game.
 
-    این جدول واسط بین User و Game است و زمان سپری‌شده و نتیجه را نگه می‌دارد.
+    This association table links User and Game and stores the elapsed time
+    and the result.
     """
 
     __tablename__ = "game_players"
@@ -139,15 +141,15 @@ class GamePlayer(db.Model):
     game_id = db.Column(db.Integer, db.ForeignKey("games.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
-    # زمان محاسبه‌شده در سرور؛ می‌تواند تا لحظه‌ی Stop خالی باشد.
+    # Time computed on the server; may be empty until Stop is pressed.
     elapsed_time = db.Column(db.Float, nullable=True)
-    # حدس بازیکن از زمان سپری‌شده و اختلاف آن با زمان واقعی.
+    # The player's guess of the elapsed time and its difference from the real time.
     guessed_time = db.Column(db.Float, nullable=True)
     guess_diff = db.Column(db.Float, nullable=True)
     result = db.Column(db.String(16), nullable=False, default=PlayerResult.NO_RESULT.value)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-    # --- روابط ---
+    # --- Relationships ---
     game = db.relationship("Game", back_populates="players")
     user = db.relationship("User", back_populates="game_players")
 

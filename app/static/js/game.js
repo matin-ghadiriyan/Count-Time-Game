@@ -1,29 +1,29 @@
 /**
- * static/js/game.js — منطق کلاینت بازی Count Time Game
+ * static/js/game.js — Client logic for Count Time Game.
  *
- * مسئولیت‌ها:
- *   - اتصال به Socket.IO و عضویت در Room
- *   - مدیریت UI (لیست بازیکنان، وضعیت بازی، دکمه‌ها)
- *   - نمایش Timer به‌صورت محلی (بدون دریافت مکرر از سرور)
- *   - ارسال Eventهای start_game و stop_game
- *   - نمایش نتیجه‌ی نهایی که از سرور می‌آید
+ * Responsibilities:
+ *   - Connect to Socket.IO and join the Room
+ *   - Manage the UI (player list, game state, buttons)
+ *   - Display the timer locally (without polling the server)
+ *   - Emit the start_game and stop_game events
+ *   - Display the final result coming from the server
  *
- * نکته‌ی مهم:
- *   این فایل هرگز زمان را محاسبه نمی‌کند؛ فقط زمان سپری‌شده را
- *   برای نمایش محلی نشان می‌دهد. مقدار نهایی از سرور می‌آید.
+ * Important note:
+ *   This file never computes the real time; it only shows the elapsed
+ *   time for local display. The final value comes from the server.
  */
 
 (function () {
   "use strict";
 
-  // --- خواندن اطلاعات تزریق‌شده از قالب ---
+  // --- Read data injected by the template ---
   const root = document.querySelector(".game-wrap");
   if (!root) return;
 
   const roomCode = root.dataset.roomCode;
   const username = root.dataset.username;
 
-  // --- ارجاع به عناصر UI ---
+  // --- References to UI elements ---
   const els = {
     stateDot: document.getElementById("state-dot"),
     stateText: document.getElementById("state-text"),
@@ -45,7 +45,7 @@
     guessFeedback: document.getElementById("guess-feedback"),
   };
 
-  // --- وضعیت محلی کلاینت ---
+  // --- Local client state ---
   const local = {
     myUserId: null,
     isHost: false,
@@ -59,7 +59,7 @@
   };
 
   // ================================================================
-  // ابزارهای UI
+  // UI helpers
   // ================================================================
   const STATE_LABELS = {
     WAITING: "در انتظار شروع",
@@ -120,11 +120,11 @@
   }
 
   // ================================================================
-  // Timer محلی (فقط برای نمایش؛ نتیجه‌ی واقعی از سرور می‌آید)
+  // Local timer (display only; the real result comes from the server)
   // ================================================================
   function startLocalTimer() {
-    // زمان به بازیکن نوبت‌دار نشان داده نمی‌شود؛ پس Timer محلی فقط
-    // برای بازیکنانِ غیرنوبتی (حریفان) به‌عنوان شمارنده‌ی نمایشی اجرا می‌شود.
+    // The time is not shown to the player whose turn it is; so the local
+    // timer only runs for non-turn players (opponents) as a display counter.
     if (local.isMyTurn) return;
 
     local.localStart = performance.now();
@@ -146,7 +146,7 @@
   }
 
   // ================================================================
-  // به‌روزرسانی دکمه‌ها بر اساس وضعیت
+  // Update the buttons based on state
   // ================================================================
   function refreshControls() {
     const running = local.gameState === "RUNNING";
@@ -160,7 +160,7 @@
   }
 
   // ================================================================
-  // جعبه‌ی حدس زمان
+  // Time guess box
   // ================================================================
   function showGuessBox() {
     if (local.hasGuessed) return;
@@ -186,7 +186,7 @@
   });
 
   socket.on("connect", () => {
-    // پس از اتصال، درخواست عضویت در Room ارسال می‌شود.
+    // After connecting, send a request to join the Room.
     socket.emit("join_room", { room_code: roomCode });
   });
 
@@ -229,7 +229,7 @@
       }
     }
 
-    // نمایش نوبت جاری
+    // Show the current turn
     const turnPlayer = data.players.find((p) => p.is_current_turn);
     if (local.gameState === "RUNNING" && turnPlayer) {
       if (local.isMyTurn) {
@@ -239,7 +239,7 @@
       }
     }
 
-    // اگر بازی تمام شده و همه نوبت‌ها انجام شده، منتظر نتیجه بمان
+    // If the game is over and all turns are done, wait for the result
     if (local.gameState === "RUNNING" && !turnPlayer && data.players.length > 0) {
       const allGuessed = data.players.every(
         (p) => !p.connected || p.has_guessed
@@ -270,11 +270,11 @@
   socket.on("player_started", (data) => {
     if (data.user_id === local.myUserId) {
       local.hasStarted = true;
-      // بازیکن نوبت‌دار زمان خودش را نمی‌بیند؛ فقط دکمه‌ی Stop فعال است.
+      // The player whose turn it is does not see their own time; only the Stop button is active.
       els.timerDisplay.textContent = "؟.؟؟؟";
       setHint("زمان مخفی است! هر وقت خواستی Stop بزن.");
     } else {
-      // زمان حریف برای ما قابل‌مشاهده است.
+      // The opponent's time is visible to us.
       setHint(data.username + " شروع کرد… زمان او را ببین.");
       startLocalTimer();
     }
@@ -282,7 +282,7 @@
   });
 
   socket.on("opponent_elapsed", (data) => {
-    // زمان حریف برای ما قابل‌مشاهده است، اما او خودش نمی‌بیند.
+    // The opponent's time is visible to us, but they cannot see it themselves.
     if (data.user_id !== local.myUserId) {
       stopLocalTimer();
       els.timerDisplay.textContent = formatTime(data.elapsed_time);
@@ -312,13 +312,13 @@
     if (data.user_id === local.myUserId) {
       local.hasStopped = true;
       stopLocalTimer();
-      // زمان به کاربر نشان داده نمی‌شود؛ باید حدس بزند.
+      // The time is not shown to the user; they must guess it.
       els.timerDisplay.textContent = "؟.؟؟؟";
       setHint("حالا حدس بزن چند ثانیه گذشت!");
       showGuessBox();
       refreshControls();
     } else {
-      // حریف Stop کرد؛ زمان او برای ما نمایش داده شد (از طریق opponent_elapsed).
+      // The opponent stopped; their time was shown to us (via opponent_elapsed).
       setHint(data.username + " Stop کرد.");
     }
   });
@@ -341,7 +341,7 @@
     setState("FINISHED");
     stopLocalTimer();
 
-    // --- بنر نتیجه ---
+    // --- Result banner ---
     if (data.winner) {
       els.resultBanner.hidden = false;
       els.resultBanner.className = "result-banner result-banner--show";
@@ -353,7 +353,7 @@
       els.resultBanner.textContent = "برنده‌ای تعیین نشد.";
     }
 
-    // --- لیست نتایج ---
+    // --- Results list ---
     els.resultsPanel.hidden = false;
     els.resultsList.innerHTML = "";
     (data.results || []).forEach((r, index) => {
@@ -386,9 +386,10 @@
     els.stopBtn.disabled = true;
     hideGuessBox();
 
-    // --- انتقال به صفحه‌ی نتایج نهایی ---
-    // پس از یک مکث کوتاه، کاربر به صفحه‌ی اختصاصی نتایج می‌رود که شامل
-    // زمان درست، زمان بازیکنان، اختلاف و جدول رتبه‌بندی ۱، ۲، ۳، ۴ است.
+    // --- Redirect to the final results page ---
+    // After a short pause, the user goes to the dedicated results page that
+    // shows the correct time, the players' times, the differences, and the
+    // ranked table (1, 2, 3, 4).
     const gameId = data.game_id;
     if (gameId) {
       setTimeout(() => {
@@ -418,7 +419,7 @@
   });
 
   // ================================================================
-  // رویدادهای UI
+  // UI events
   // ================================================================
   els.beginBtn.addEventListener("click", () => {
     socket.emit("start_game", { room_code: roomCode, action: "begin" });
@@ -462,11 +463,11 @@
       els.roomCodeBtn.classList.add("copied");
       setTimeout(() => els.roomCodeBtn.classList.remove("copied"), 1200);
     } catch (e) {
-      /* clipboard در دسترس نیست */
+      /* clipboard is not available */
     }
   });
 
-  // --- پیش از بستن صفحه، خروج از Room اطلاع داده شود ---
+  // --- Notify Room exit before the page is closed ---
   window.addEventListener("beforeunload", () => {
     socket.emit("leave_room", { room_code: roomCode });
   });

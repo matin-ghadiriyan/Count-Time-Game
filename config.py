@@ -1,12 +1,12 @@
 """
-config.py — تنظیمات مرکزی پروژه Count Time Game
+config.py — Central configuration for the Count Time Game project.
 
-این فایل مسئول خواندن متغیرهای محیطی از .env و تبدیل آن‌ها به
-کلاس‌های تنظیمات Flask است. هیچ منطق بازی اینجا نیست؛ فقط
-پیکربندی (Secret Key، دیتابیس، ظرفیت Room و ...).
+This file reads environment variables from .env and turns them into
+Flask config classes. No game logic lives here; only configuration
+(secret key, database, room capacity, ...).
 
-چرا این‌جا؟ چون Flask از الگوی «Config Objects» پشتیبانی می‌کند و
-نگه‌داشتن تنظیمات در یک فایل، تست‌پذیری و تغییر محیط را ساده می‌کند.
+Why here? Flask supports the "Config Objects" pattern, and keeping the
+settings in one file makes testing and switching environments easier.
 """
 
 import os
@@ -14,22 +14,22 @@ from datetime import timedelta
 
 from dotenv import load_dotenv
 
-# خواندن فایل .env از ریشه‌ی پروژه
+# Read the .env file from the project root
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
 class Config:
-    """تنظیمات پایه که در همه‌ی محیط‌ها مشترک است."""
+    """Base settings shared by all environments."""
 
-    # --- امنیت ---
+    # --- Security ---
     SECRET_KEY = os.getenv("SECRET_KEY", "count-time-game-dev-secret")
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
 
-    # --- دیتابیس ---
-    # پیش‌فرض SQLite است؛ با تنظیم DATABASE_URL در .env می‌توان به MySQL سوییچ کرد.
+    # --- Database ---
+    # SQLite is the default; set DATABASE_URL in .env to switch to MySQL.
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL",
         f"sqlite:///{os.path.join(BASE_DIR, 'count_time_game.db')}",
@@ -40,10 +40,10 @@ class Config:
         "pool_recycle": 280,
     }
 
-    # --- تنظیمات بازی Count Time Game ---
+    # --- Count Time Game settings ---
     ROOM_CAPACITY = int(os.getenv("ROOM_CAPACITY", "8"))
     ROOM_CODE_LENGTH = 6
-    # حداقل و حداکثر زمان مجاز برای ثبت نتیجه (ضد تقلب)
+    # Minimum and maximum allowed time for a result (anti-cheat)
     MIN_VALID_TIME = 0.05
     MAX_VALID_TIME = 120.0
 
@@ -52,7 +52,7 @@ class Config:
     SOCKETIO_PING_TIMEOUT = 30
     SOCKETIO_PING_INTERVAL = 10
 
-    # --- عمومی ---
+    # --- General ---
     APP_NAME = "Count Time Game"
     JSON_SORT_KEYS = False
 
@@ -75,7 +75,7 @@ class TestingConfig(Config):
     WTF_CSRF_ENABLED = False
 
 
-# نگاشت نام محیط به کلاس تنظیمات
+# Map of environment name to config class
 config_by_name = {
     "development": DevelopmentConfig,
     "production": ProductionConfig,
@@ -85,6 +85,6 @@ config_by_name = {
 
 
 def get_config(name: str | None = None) -> type[Config]:
-    """دریافت کلاس تنظیمات بر اساس نام محیط (پیش‌فرض: development)."""
+    """Get the config class by environment name (default: development)."""
     env = (name or os.getenv("FLASK_ENV") or "development").lower()
     return config_by_name.get(env, DevelopmentConfig)

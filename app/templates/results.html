@@ -5,7 +5,7 @@
 {% block content %}
 <section class="results-page" data-room-code="{{ room_code }}">
 
-    <!-- سرصفحه‌ی نتایج -->
+    <!-- Results header -->
     <header class="results-head">
         <span class="results-eyebrow">پایان بازی</span>
         <h1 class="results-title">نتایج نهایی</h1>
@@ -15,7 +15,7 @@
         </p>
     </header>
 
-    <!-- کارت برنده -->
+    <!-- Winner card -->
     {% if winner %}
     <div class="winner-card">
         <div class="winner-crown" aria-hidden="true">🏆</div>
@@ -35,7 +35,7 @@
     </div>
     {% endif %}
 
-    <!-- خلاصه‌ی زمان‌ها -->
+    <!-- Times summary -->
     {% if reference_time is not none %}
     <div class="time-summary">
         <div class="time-tile time-tile--ref">
@@ -53,7 +53,7 @@
     </div>
     {% endif %}
 
-    <!-- جدول رتبه‌بندی -->
+    <!-- Ranking table -->
     <div class="table-wrap results-table-wrap">
         <table class="data-table results-table">
             <thead>
@@ -91,7 +91,7 @@
         </table>
     </div>
 
-    <!-- اقدامات -->
+    <!-- Actions -->
     <div class="results-actions">
         <a href="{{ url_for('pages.game_room', room_code=room_code) }}" class="btn btn--primary">بازی دوباره در همین اتاق</a>
         <a href="{{ url_for('pages.dashboard') }}" class="btn btn--ghost">بازگشت به داشبورد</a>

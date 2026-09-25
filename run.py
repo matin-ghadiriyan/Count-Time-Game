@@ -1,13 +1,13 @@
 """
-run.py — نقطه‌ی ورود پروژه Count Time Game
+run.py — Entry point for the Count Time Game project.
 
-مسئولیت این فایل فقط اجرای سرور است. ساخت اپ در app/__init__.py انجام
-می‌شود و اینجا فقط نمونه گرفته و socketio.run صدا زده می‌شود.
+This file only runs the server. The app is built in app/__init__.py and
+here we simply grab the instance and call socketio.run.
 
-چرا socketio.run و نه app.run؟
-    چون Flask-SocketIO نیاز به سروری دارد که از WebSocket پشتیبانی کند.
-    socketio.run به‌صورت خودکار موتور مناسب (threading/eventlet) را
-    برمی‌گزیند و در حالت debug از reloader امن استفاده می‌کند.
+Why socketio.run and not app.run?
+    Because Flask-SocketIO needs a server that supports WebSocket.
+    socketio.run automatically picks the right engine (threading/eventlet)
+    and uses a safe reloader in debug mode.
 """
 
 import os

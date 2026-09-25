@@ -1,24 +1,24 @@
 """
-app/__init__.py — Application Factory پروژه Count Time Game
+app/__init__.py — Application Factory for the Count Time Game project.
 
-مسئولیت این فایل:
-    - ساخت نمونه‌ی Flask
-    - بارگذاری تنظیمات از config.py
-    - مقداردهی اولیه‌ی Extensionها (db، login_manager، socketio، csrf)
-    - ثبت Blueprint صفحات
-    - ثبت Socket Eventها با import ماژول socket_on
-    - ساخت جداول دیتابیس در اولین اجرا و ایجاد جدول‌های لازم
+Responsibilities of this file:
+    - Create the Flask instance
+    - Load settings from config.py
+    - Initialize extensions (db, login_manager, socketio, csrf)
+    - Register the page blueprints
+    - Register Socket.IO events by importing the socket_on module
+    - Create the database tables on first run
 
-چرا Application Factory؟
-    این الگو در Flask استاندارد است و اجازه می‌دهد نمونه‌ی اپ در تست‌ها
-    یا محیط‌های مختلف با تنظیمات متفاوت ساخته شود. همچنین از ایجاد
-    چرخه‌ی import بین app، models و routes جلوگیری می‌کند.
+Why an Application Factory?
+    This is the standard Flask pattern and lets the app instance be built
+    with different settings for tests or different environments. It also
+    avoids import cycles between app, models, and routes.
 
-ترتیب مقداردهی مهم است:
-    1) db و login_manager و socketio متصل شوند.
-    2) Blueprint صفحات ثبت شود.
-    3) ماژول socket_on import شود تا Eventها ثبت شوند.
-    4) جداول دیتابیس ساخته شوند.
+Initialization order matters:
+    1) db, login_manager, and socketio are attached.
+    2) Page blueprints are registered.
+    3) The socket_on module is imported so events are registered.
+    4) The database tables are created.
 """
 
 from flask import Flask
@@ -29,7 +29,7 @@ from .models import User
 
 
 def create_app(config_name: str | None = None) -> Flask:
-    """ساخت و پیکربندی نمونه‌ی اپلیکیشن Count Time Game."""
+    """Create and configure the Count Time Game application instance."""
 
     app = Flask(
         __name__,
@@ -37,15 +37,15 @@ def create_app(config_name: str | None = None) -> Flask:
         static_folder="static",
     )
 
-    # --- بارگذاری تنظیمات ---
+    # --- Load settings ---
     app.config.from_object(get_config(config_name))
 
-    # --- مقداردهی Extensionها ---
+    # --- Initialize extensions ---
     db.init_app(app)
     login_manager.init_app(app)
     csrf.init_app(app)
 
-    # SocketIO با async_mode مشخص‌شده در تنظیمات راه‌اندازی می‌شود.
+    # SocketIO starts with the async_mode specified in the settings.
     socketio.init_app(
         app,
         async_mode=app.config.get("SOCKETIO_ASYNC_MODE", "threading"),
@@ -54,19 +54,20 @@ def create_app(config_name: str | None = None) -> Flask:
         ping_interval=app.config.get("SOCKETIO_PING_INTERVAL", 10),
     )
 
-    # --- User Loader برای Flask-Login ---
+    # --- User loader for Flask-Login ---
     @login_manager.user_loader
     def load_user(user_id: str) -> User | None:
         return db.session.get(User, int(user_id))
 
-    # --- ثبت Blueprint صفحات ---
-    from .pages.routes import bp as pages_bp
+    # --- Register page blueprints ---
+    from .pages.routes import blueprints
 
-    app.register_blueprint(pages_bp)
+    for bp in blueprints():
+        app.register_blueprint(bp)
 
-    # --- ثبت Socket Eventها ---
-    # این import باعث اجرای decoratorهای @socketio.on می‌شود.
-    # مهم است که بعد از socketio.init_app انجام شود.
+    # --- Register Socket.IO events ---
+    # This import triggers the @socketio.on decorators.
+    # It must run after socketio.init_app.
     from .pages.socket_on import (  # noqa: F401
         handle_connect,
         handle_disconnect,
@@ -75,14 +76,10 @@ def create_app(config_name: str | None = None) -> Flask:
         handle_ping,
         handle_start_game,
         handle_stop_game,
+        handle_submit_guess,
     )
 
-    # --- CSRF برای SocketIO غیرفعال می‌شود ---
-    # SocketIO از CSRF Token پشتیبانی نمی‌کند؛ امنیت سوکت با بررسی
-    # احراز هویت و عضویت در Room تضمین می‌شود.
-    csrf.exempt(pages_bp)
-
-    # --- ساخت جداول دیتابیس ---
+    # --- Create database tables ---
     with app.app_context():
         db.create_all()
 

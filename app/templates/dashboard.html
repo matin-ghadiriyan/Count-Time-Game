@@ -72,7 +72,7 @@
 
 {% block scripts %}
 <script>
-    // هدایت کاربر به صفحه‌ی بازی با کد وارد شده؛ بدون ارسال هیچ داده‌ی حساسی.
+    // Redirect the user to the game page with the entered code; without sending any sensitive data.
     document.getElementById('join-form').addEventListener('submit', function (event) {
         event.preventDefault();
         const code = document.getElementById('room-code-input').value.trim().toUpperCase();
