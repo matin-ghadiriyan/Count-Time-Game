@@ -13,7 +13,7 @@ Werkzeug==3.0.3
 python-dotenv==1.0.1
 # Realtime server
 simple-websocket==1.0.0
-eventlet==0.36.2
+eventlet==0.36.1
 # Database (SQLite by default, MySQL optional)
 # PyMySQL==1.1.1
 # cryptography==42.0.8
